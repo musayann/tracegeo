@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+VERSION="0.1.0"
+
+# ---------------------------------------------------------------------------
+# Colors (respect NO_COLOR env var and non-TTY output)
+# ---------------------------------------------------------------------------
+if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
+  BOLD=$'\033[1m'
+  DIM=$'\033[2m'
+  CYAN=$'\033[0;36m'
+  YELLOW=$'\033[1;33m'
+  GREEN=$'\033[0;32m'
+  RED=$'\033[0;31m'
+  RESET=$'\033[0m'
+else
+  BOLD='' DIM='' CYAN='' YELLOW='' GREEN='' RED='' RESET=''
+fi
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+die() {
+  printf "%sError:%s %s\n" "$RED" "$RESET" "$1" >&2
+  exit 1
+}
+
+usage() {
+  cat <<EOF
+Usage: tracegeo [options] <destination>
+
+Trace the route to a destination and show geolocation for each hop.
+
+Options:
+  -h, --help       Show this help message
+  -v, --version    Show version
+  -m, --max-hops N Maximum number of hops (default: 30)
+  -q, --queries N  Number of probes per hop (default: 3)
+
+Examples:
+  tracegeo google.com
+  tracegeo -m 15 example.com
+EOF
+}
+
+check_deps() {
+  local missing=()
+  for cmd in dig traceroute curl; do
+    command -v "$cmd" &>/dev/null || missing+=("$cmd")
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    die "Missing required commands: ${missing[*]}"
+  fi
+}
+
+is_private_ip() {
+  case "$1" in
+    10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|192.168.*|169.254.*|127.*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Spinner (background subprocess, writes to stderr only)
+# ---------------------------------------------------------------------------
+SPINNER_PID=""
+
+start_spinner() {
+  [[ ! -t 2 ]] && return
+  local label="$1"
+  (
+    frames=('|' '/' '-' '\')
+    i=0
+    while true; do
+      printf "\r  %s %s" "${frames[$((i % 4))]}" "$label" >&2
+      ((i++))
+      sleep 0.1
+    done
+  ) &
+  SPINNER_PID=$!
+}
+
+stop_spinner() {
+  if [[ -n "$SPINNER_PID" ]]; then
+    kill "$SPINNER_PID" 2>/dev/null
+    wait "$SPINNER_PID" 2>/dev/null || true
+    SPINNER_PID=""
+    printf "\r\033[K" >&2
+  fi
+}
+
+cleanup() {
+  stop_spinner
+}
+trap cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+MAX_HOPS=30
+PROBES=3
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)     usage; exit 0 ;;
+    -v|--version)  echo "tracegeo $VERSION"; exit 0 ;;
+    -m|--max-hops) MAX_HOPS="$2"; shift ;;
+    -q|--queries)  PROBES="$2"; shift ;;
+    --)            shift; break ;;
+    -*)            die "Unknown option: $1" ;;
+    *)             break ;;
+  esac
+  shift
+done
+
+TARGET="${1:-}"
+[[ -z "$TARGET" ]] && { usage; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+check_deps
+
+# Resolve target — skip dig if already an IP address
+if [[ "$TARGET" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  target_ip="$TARGET"
+else
+  target_ip=$(dig +short A "$TARGET" | grep -E "^[0-9]" | head -1)
+  [[ -z "$target_ip" ]] && die "Could not resolve $TARGET"
+fi
+
+# Header
+if [[ "$TARGET" == "$target_ip" ]]; then
+  printf "Tracing route to %s%s%s...\n\n" "$BOLD" "$target_ip" "$RESET"
+else
+  printf "Tracing route to %s%s%s (%s%s%s)...\n\n" \
+    "$BOLD" "$TARGET" "$RESET" "$CYAN" "$target_ip" "$RESET"
+fi
+
+# Table header
+printf " %s%-4s  %-16s  %10s   %-24s %s%s\n" \
+  "$DIM" "HOP" "IP" "LATENCY" "LOCATION" "ORG" "$RESET"
+printf " %s%-4s  %-16s  %10s   %-24s %s%s\n" \
+  "$DIM" "───" "────────────────" "──────────" "────────────────────────" "────────────────────" "$RESET"
+
+# Traceroute + geo lookup
+hop_count=0
+reached=false
+
+while IFS= read -r line; do
+  # Skip traceroute header line
+  [[ "$line" == traceroute* ]] && continue
+
+  # Extract hop number
+  hop=$(echo "$line" | awk '{print $1}')
+  [[ -z "$hop" || ! "$hop" =~ ^[0-9]+$ ]] && continue
+  hop_count=$hop
+
+  # Timeout line (* * *)
+  if [[ "$line" =~ ^[[:space:]]*[0-9]+[[:space:]]+\*[[:space:]]+\*[[:space:]]+\* ]]; then
+    printf " %s%3s%s  %s%-16s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
+      "$BOLD" "$hop" "$RESET" \
+      "$DIM" "*" "$RESET" \
+      "$DIM" "*" "$RESET" \
+      "$DIM" "-" "$RESET" \
+      "$DIM" "-" "$RESET"
+    continue
+  fi
+
+  # Extract IP and latency
+  ip=$(echo "$line" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+  latency=$(echo "$line" | grep -oE '[0-9]+\.[0-9]+ ms' | head -1)
+  latency="${latency:--}"
+
+  [[ -z "$ip" ]] && continue
+
+  [[ "$ip" == "$target_ip" ]] && reached=true
+
+  # Private IP — skip geo lookup
+  if is_private_ip "$ip"; then
+    printf " %s%3s%s  %s%-16s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
+      "$BOLD" "$hop" "$RESET" \
+      "$CYAN" "$ip" "$RESET" \
+      "$YELLOW" "$latency" "$RESET" \
+      "$DIM" "(private)" "$RESET" \
+      "$DIM" "-" "$RESET"
+    continue
+  fi
+
+  # Geo lookup
+  start_spinner "Looking up $ip..."
+
+  response=$(curl -s -m 3 -w "\n%{http_code}" "https://ipinfo.io/$ip" 2>/dev/null) || true
+  http_code=$(echo "$response" | tail -1)
+  body=$(echo "$response" | sed '$d')
+
+  stop_spinner
+
+  if [[ "$http_code" == "200" ]]; then
+    city=$(echo "$body" | grep -o '"city": *"[^"]*"' | cut -d'"' -f4)
+    country=$(echo "$body" | grep -o '"country": *"[^"]*"' | cut -d'"' -f4)
+    org=$(echo "$body" | grep -o '"org": *"[^"]*"' | cut -d'"' -f4)
+
+    if [[ -n "$city" && -n "$country" ]]; then
+      location="$city, $country"
+    elif [[ -n "$country" ]]; then
+      location="$country"
+    else
+      location="-"
+    fi
+    org="${org:--}"
+  else
+    location="(lookup failed)"
+    org="-"
+  fi
+
+  printf " %s%3s%s  %s%-16s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
+    "$BOLD" "$hop" "$RESET" \
+    "$CYAN" "$ip" "$RESET" \
+    "$YELLOW" "$latency" "$RESET" \
+    "$GREEN" "$location" "$RESET" \
+    "$DIM" "$org" "$RESET"
+
+done < <(traceroute -n -m "$MAX_HOPS" -q "$PROBES" "$target_ip" 2>&1)
+
+# Footer
+echo
+if [[ $hop_count -eq 0 ]]; then
+  die "No hops recorded. You may need to run with sudo."
+elif $reached; then
+  printf "Done. %s%d hops%s, destination reached.\n" "$GREEN" "$hop_count" "$RESET"
+else
+  printf "Done. %s%d hops%s, destination not reached.\n" "$YELLOW" "$hop_count" "$RESET"
+fi
