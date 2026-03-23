@@ -38,6 +38,7 @@ Options:
   -v, --version    Show version
   -m, --max-hops N Maximum number of hops (default: 30)
   -q, --queries N  Number of probes per hop (default: 3)
+  -t, --timeout N  Give up after N consecutive timeouts (default: 2)
 
 Examples:
   tracegeo google.com
@@ -116,6 +117,7 @@ while [[ $# -gt 0 ]]; do
     -v|--version)  echo "tracegeo $VERSION"; exit 0 ;;
     -m|--max-hops) MAX_HOPS="$2"; shift ;;
     -q|--queries)  PROBES="$2"; shift ;;
+    -t|--timeout)  MAX_CONSECUTIVE_TIMEOUTS="$2"; shift ;;
     --)            shift; break ;;
     -*)            die "Unknown option: $1" ;;
     *)             break ;;
@@ -156,6 +158,7 @@ printf " %s%-4s  %-16s  %10s   %-24s %s%s\n" \
 # Traceroute + geo lookup
 hop_count=0
 reached=false
+timed_out=false
 consecutive_timeouts=0
 
 while IFS= read -r -t 30 line; do
@@ -177,8 +180,7 @@ while IFS= read -r -t 30 line; do
       "$DIM" "-" "$RESET"
     ((consecutive_timeouts++)) || true
     if [[ $consecutive_timeouts -ge $MAX_CONSECUTIVE_TIMEOUTS ]]; then
-      printf "\n %s%sGave up after %d consecutive timeouts.%s\n" \
-        "$DIM" "$YELLOW" "$consecutive_timeouts" "$RESET"
+      timed_out=true
       break
     fi
     continue
@@ -248,6 +250,8 @@ if [[ $hop_count -eq 0 ]]; then
   die "No hops recorded. You may need to run with sudo."
 elif $reached; then
   printf "Done. %s%d hops%s, destination reached.\n" "$GREEN" "$hop_count" "$RESET"
+elif $timed_out; then
+  printf "Done. %s%d hops%s, last %d hops did not respond.\n" "$YELLOW" "$hop_count" "$RESET" "$consecutive_timeouts"
 else
   printf "Done. %s%d hops%s, destination not reached.\n" "$YELLOW" "$hop_count" "$RESET"
 fi
