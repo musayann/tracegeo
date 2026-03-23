@@ -2,6 +2,7 @@
 set -uo pipefail
 
 VERSION="0.1.0"
+MAX_CONSECUTIVE_TIMEOUTS=2
 
 # ---------------------------------------------------------------------------
 # Colors (respect NO_COLOR env var and non-TTY output)
@@ -90,10 +91,18 @@ stop_spinner() {
   fi
 }
 
+_CLEANING_UP=false
+
 cleanup() {
+  $_CLEANING_UP && return
+  _CLEANING_UP=true
   stop_spinner
+  kill 0 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -147,8 +156,9 @@ printf " %s%-4s  %-16s  %10s   %-24s %s%s\n" \
 # Traceroute + geo lookup
 hop_count=0
 reached=false
+consecutive_timeouts=0
 
-while IFS= read -r line; do
+while IFS= read -r -t 30 line; do
   # Skip traceroute header line
   [[ "$line" == traceroute* ]] && continue
 
@@ -165,8 +175,16 @@ while IFS= read -r line; do
       "$DIM" "*" "$RESET" \
       "$DIM" "-" "$RESET" \
       "$DIM" "-" "$RESET"
+    ((consecutive_timeouts++)) || true
+    if [[ $consecutive_timeouts -ge $MAX_CONSECUTIVE_TIMEOUTS ]]; then
+      printf "\n %s%sGave up after %d consecutive timeouts.%s\n" \
+        "$DIM" "$YELLOW" "$consecutive_timeouts" "$RESET"
+      break
+    fi
     continue
   fi
+
+  consecutive_timeouts=0
 
   # Extract IP and latency
   ip=$(echo "$line" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
