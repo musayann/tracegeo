@@ -9,7 +9,7 @@ Trace the network route to any destination and see where each hop is in the worl
 
 ## Sample Output
 
-```
+```bash
 Tracing route to google.com (142.250.80.46)...
 
  HOP   IP                 LATENCY   LOCATION                 ORG
@@ -42,12 +42,12 @@ Done. 6 hops, destination reached.
 
 tracegeo runs on any Unix-like system with the following:
 
-| Dependency     | Purpose                     | Typical Package                |
-| -------------- | --------------------------- | ------------------------------ |
-| `bash` 4.0+   | Script interpreter          | Pre-installed on most systems  |
-| `traceroute`   | Network route tracing       | `traceroute` / `inetutils`     |
-| `dig`          | DNS resolution              | `dnsutils` / `bind-utils`      |
-| `curl`         | HTTP requests to ipinfo.io  | `curl`                         |
+| Dependency   | Purpose                    | Typical Package               |
+| ------------ | -------------------------- | ----------------------------- |
+| `bash` 4.0+  | Script interpreter         | Pre-installed on most systems |
+| `traceroute` | Network route tracing      | `traceroute` / `inetutils`    |
+| `dig`        | DNS resolution             | `dnsutils` / `bind-utils`     |
+| `curl`       | HTTP requests to ipinfo.io | `curl`                        |
 
 Run `make check` to verify all dependencies are present.
 
@@ -157,12 +157,12 @@ tracegeo google.com > trace.txt
 
 ## Options
 
-| Flag                 | Description                       | Default |
-| -------------------- | --------------------------------- | ------- |
-| `-h`, `--help`       | Show help message and exit        |         |
-| `-v`, `--version`    | Print version and exit            |         |
-| `-m`, `--max-hops N` | Maximum number of hops to trace   | `30`    |
-| `-q`, `--queries N`  | Number of probes sent per hop     | `3`     |
+| Flag                 | Description                     | Default |
+| -------------------- | ------------------------------- | ------- |
+| `-h`, `--help`       | Show help message and exit      |         |
+| `-v`, `--version`    | Print version and exit          |         |
+| `-m`, `--max-hops N` | Maximum number of hops to trace | `30`    |
+| `-q`, `--queries N`  | Number of probes sent per hop   | `3`     |
 
 ## How It Works
 
@@ -182,9 +182,9 @@ destination ──▶ dig (DNS) ──▶ traceroute ──▶ per-hop curl (ipi
 
 ## Environment Variables
 
-| Variable    | Effect                                                          |
-| ----------- | --------------------------------------------------------------- |
-| `NO_COLOR`  | When set to any non-empty value, disables all ANSI color codes  |
+| Variable   | Effect                                                         |
+| ---------- | -------------------------------------------------------------- |
+| `NO_COLOR` | When set to any non-empty value, disables all ANSI color codes |
 
 Color is also automatically disabled when stdout is not a terminal (e.g., when piping to a file).
 
