@@ -10,16 +10,16 @@ Trace the network route to any destination and see where each hop is in the worl
 ## Sample Output
 
 ```bash
-Tracing route to google.com (142.250.80.46)...
+Tracing route to google.com (172.217.170.206)...
 
- HOP   IP                 LATENCY   LOCATION                 ORG
- ───   ────────────────   ──────────   ────────────────────────   ────────────────────
-   1   192.168.1.1           1.2 ms   (private)                -
-   2   10.0.0.1              3.4 ms   (private)                -
-   3   72.14.215.197         5.1 ms   Dallas, US               AS15169 Google LLC
-   4   *                          *   -                        -
-   5   108.170.248.65        8.3 ms   Dallas, US               AS15169 Google LLC
-   6   142.250.80.46        11.7 ms   Kansas City, US          AS15169 Google LLC
+ HOP   IP                   LATENCY       DELTA   LOCATION                 ORG
+ ───  ────────────────  ──────────  ──────────   ──────────────────────── ────────────────────
+   1  192.168.8.1         0.800 ms           -   (private)                -
+   2  41.216.140.1        4.163 ms     +3.0 ms   Kigali, RW               AS37006 Liquid Telecommunication Rwanda Limited
+   3  197.155.90.64      18.973 ms     -5.0 ms   Nairobi, KE              AS30844 Liquid Telecommunications Ltd
+   4  41.60.138.237      24.070 ms     +5.1 ms   Mombasa, KE              AS30844 Liquid Telecommunications Ltd
+   5  192.178.251.145    25.522 ms     +3.9 ms   Mombasa, KE              AS15169 Google LLC
+   6  172.217.170.206    26.283 ms     +4.5 ms   Mombasa, KE              AS15169 Google LLC
 
 Done. 6 hops, destination reached.
 ```
@@ -29,7 +29,7 @@ Done. 6 hops, destination reached.
 - Traces the full network path to any IP address or domain name
 - Resolves domain names to IPs via `dig`
 - Geolocates each public hop — city, country, and organization — using [ipinfo.io](https://ipinfo.io)
-- Displays round-trip latency for each hop
+- Displays round-trip latency for each hop with inter-hop delta to pinpoint where latency is added
 - Automatically detects and labels private (RFC 1918) IP addresses
 - Colored, formatted table output with Unicode box-drawing characters
 - Animated spinner during geolocation lookups

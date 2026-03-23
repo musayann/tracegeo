@@ -150,16 +150,17 @@ else
 fi
 
 # Table header
-printf " %s%-4s  %-16s  %10s   %-24s %s%s\n" \
-  "$DIM" "HOP" "IP" "LATENCY" "LOCATION" "ORG" "$RESET"
-printf " %s%-4s  %-16s  %10s   %-24s %s%s\n" \
-  "$DIM" "───" "────────────────" "──────────" "────────────────────────" "────────────────────" "$RESET"
+printf " %s%-4s  %-16s  %10s  %10s   %-24s %s%s\n" \
+  "$DIM" "HOP" "IP" "LATENCY" "DELTA" "LOCATION" "ORG" "$RESET"
+printf " %s%-4s  %-16s  %10s  %10s   %-24s %s%s\n" \
+  "$DIM" "───" "────────────────" "──────────" "──────────" "────────────────────────" "────────────────────" "$RESET"
 
 # Traceroute + geo lookup
 hop_count=0
 reached=false
 timed_out=false
 consecutive_timeouts=0
+prev_latency_ms=""
 
 while IFS= read -r -t 30 line; do
   # Skip traceroute header line
@@ -172,12 +173,14 @@ while IFS= read -r -t 30 line; do
 
   # Timeout line (* * *)
   if [[ "$line" =~ ^[[:space:]]*[0-9]+[[:space:]]+\*[[:space:]]+\*[[:space:]]+\* ]]; then
-    printf " %s%3s%s  %s%-16s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
+    printf " %s%3s%s  %s%-16s%s  %s%10s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
       "$BOLD" "$hop" "$RESET" \
       "$DIM" "*" "$RESET" \
       "$DIM" "*" "$RESET" \
       "$DIM" "-" "$RESET" \
+      "$DIM" "-" "$RESET" \
       "$DIM" "-" "$RESET"
+    prev_latency_ms=""
     ((consecutive_timeouts++)) || true
     if [[ $consecutive_timeouts -ge $MAX_CONSECUTIVE_TIMEOUTS ]]; then
       timed_out=true
@@ -193,16 +196,30 @@ while IFS= read -r -t 30 line; do
   latency=$(echo "$line" | grep -oE '[0-9]+\.[0-9]+ ms' | head -1)
   latency="${latency:--}"
 
+  # Compute delta from previous hop
+  cur_ms="${latency% ms}"
+  if [[ "$cur_ms" =~ ^[0-9]+\.[0-9]+$ ]] && [[ -n "$prev_latency_ms" ]]; then
+    delta=$(awk "BEGIN {d = $cur_ms - $prev_latency_ms; printf \"%+.1f ms\", d}")
+  else
+    delta="-"
+  fi
+  if [[ "$cur_ms" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    prev_latency_ms="$cur_ms"
+  else
+    prev_latency_ms=""
+  fi
+
   [[ -z "$ip" ]] && continue
 
   [[ "$ip" == "$target_ip" ]] && reached=true
 
   # Private IP — skip geo lookup
   if is_private_ip "$ip"; then
-    printf " %s%3s%s  %s%-16s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
+    printf " %s%3s%s  %s%-16s%s  %s%10s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
       "$BOLD" "$hop" "$RESET" \
       "$CYAN" "$ip" "$RESET" \
       "$YELLOW" "$latency" "$RESET" \
+      "$YELLOW" "$delta" "$RESET" \
       "$DIM" "(private)" "$RESET" \
       "$DIM" "-" "$RESET"
     continue
@@ -235,10 +252,11 @@ while IFS= read -r -t 30 line; do
     org="-"
   fi
 
-  printf " %s%3s%s  %s%-16s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
+  printf " %s%3s%s  %s%-16s%s  %s%10s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
     "$BOLD" "$hop" "$RESET" \
     "$CYAN" "$ip" "$RESET" \
     "$YELLOW" "$latency" "$RESET" \
+    "$YELLOW" "$delta" "$RESET" \
     "$GREEN" "$location" "$RESET" \
     "$DIM" "$org" "$RESET"
 
