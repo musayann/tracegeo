@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 MAX_CONSECUTIVE_TIMEOUTS=2
+FORCE_PROTO=""
 
 # ---------------------------------------------------------------------------
 # Colors (respect NO_COLOR env var and non-TTY output)
@@ -38,11 +39,15 @@ Options:
   -v, --version    Show version
   -m, --max-hops N Maximum number of hops (default: 30)
   -q, --queries N  Number of probes per hop (default: 3)
+  -4               Force IPv4
+  -6               Force IPv6
   -t, --timeout N  Give up after N consecutive timeouts (default: 2)
 
 Examples:
   tracegeo google.com
   tracegeo -m 15 example.com
+  tracegeo -6 google.com
+  tracegeo 2001:4860:4860::8888
 EOF
 }
 
@@ -56,11 +61,41 @@ check_deps() {
   fi
 }
 
+is_ipv4() {
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+is_ipv6() {
+  [[ "$1" == *:* ]]
+}
+
 is_private_ip() {
   case "$1" in
+    # IPv4 private/reserved
     10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|192.168.*|169.254.*|127.*) return 0 ;;
+    # IPv6 loopback
+    ::1) return 0 ;;
+    # IPv6 link-local (fe80::/10)
+    fe8[0-9a-fA-F]:*|fe9[0-9a-fA-F]:*|fea[0-9a-fA-F]:*|feb[0-9a-fA-F]:*) return 0 ;;
+    # IPv6 unique local (fc00::/7)
+    fc[0-9a-fA-F][0-9a-fA-F]:*|fd[0-9a-fA-F][0-9a-fA-F]:*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+resolve_traceroute_cmd() {
+  local proto="$1"
+  if [[ "$proto" == "6" ]]; then
+    if command -v traceroute6 &>/dev/null; then
+      echo "traceroute6"
+    elif traceroute -6 ::1 &>/dev/null 2>&1; then
+      echo "traceroute -6"
+    else
+      die "IPv6 traceroute not available. Install traceroute6 or a traceroute with -6 support."
+    fi
+  else
+    echo "traceroute"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -117,6 +152,8 @@ while [[ $# -gt 0 ]]; do
     -v|--version)  echo "tracegeo $VERSION"; exit 0 ;;
     -m|--max-hops) MAX_HOPS="$2"; shift ;;
     -q|--queries)  PROBES="$2"; shift ;;
+    -4)            FORCE_PROTO="4" ;;
+    -6)            FORCE_PROTO="6" ;;
     -t|--timeout)  MAX_CONSECUTIVE_TIMEOUTS="$2"; shift ;;
     --)            shift; break ;;
     -*)            die "Unknown option: $1" ;;
@@ -133,12 +170,57 @@ TARGET="${1:-}"
 # ---------------------------------------------------------------------------
 check_deps
 
-# Resolve target — skip dig if already an IP address
-if [[ "$TARGET" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+# Resolve target and determine protocol
+if is_ipv4 "$TARGET"; then
   target_ip="$TARGET"
+  proto="4"
+elif is_ipv6 "$TARGET"; then
+  target_ip="$TARGET"
+  proto="6"
 else
-  target_ip=$(dig +short A "$TARGET" | grep -E "^[0-9]" | head -1)
-  [[ -z "$target_ip" ]] && die "Could not resolve $TARGET"
+  # Hostname — resolve according to FORCE_PROTO
+  if [[ "$FORCE_PROTO" == "6" ]]; then
+    target_ip=$(dig +short AAAA "$TARGET" | grep -iE "^[0-9a-f]*:" | head -1)
+    [[ -z "$target_ip" ]] && die "Could not resolve $TARGET to an IPv6 address"
+    proto="6"
+  elif [[ "$FORCE_PROTO" == "4" ]]; then
+    target_ip=$(dig +short A "$TARGET" | grep -E "^[0-9]" | head -1)
+    [[ -z "$target_ip" ]] && die "Could not resolve $TARGET to an IPv4 address"
+    proto="4"
+  else
+    # Auto-detect: try A first (backward compat), fall back to AAAA
+    target_ip=$(dig +short A "$TARGET" | grep -E "^[0-9]" | head -1)
+    if [[ -n "$target_ip" ]]; then
+      proto="4"
+    else
+      target_ip=$(dig +short AAAA "$TARGET" | grep -iE "^[0-9a-f]*:" | head -1)
+      if [[ -n "$target_ip" ]]; then
+        proto="6"
+      else
+        die "Could not resolve $TARGET"
+      fi
+    fi
+  fi
+fi
+
+# Validate: don't allow protocol mismatch with raw IP
+if [[ "$FORCE_PROTO" == "6" ]] && is_ipv4 "$target_ip"; then
+  die "Cannot use -6 with IPv4 address $target_ip"
+fi
+if [[ "$FORCE_PROTO" == "4" ]] && is_ipv6 "$target_ip"; then
+  die "Cannot use -4 with IPv6 address $target_ip"
+fi
+
+# Resolve the traceroute command for this protocol
+TRACEROUTE_CMD=$(resolve_traceroute_cmd "$proto")
+
+# Set column width based on protocol
+if [[ "$proto" == "6" ]]; then
+  IP_WIDTH=40
+  IP_DASHES="────────────────────────────────────────"
+else
+  IP_WIDTH=16
+  IP_DASHES="────────────────"
 fi
 
 # Header
@@ -150,10 +232,10 @@ else
 fi
 
 # Table header
-printf " %s%-4s  %-16s  %10s  %10s   %-24s %s%s\n" \
+printf " %s%-4s  %-${IP_WIDTH}s  %10s  %10s   %-24s %s%s\n" \
   "$DIM" "HOP" "IP" "LATENCY" "DELTA" "LOCATION" "ORG" "$RESET"
-printf " %s%-4s  %-16s  %10s  %10s   %-24s %s%s\n" \
-  "$DIM" "───" "────────────────" "──────────" "──────────" "────────────────────────" "────────────────────" "$RESET"
+printf " %s%-4s  %-${IP_WIDTH}s  %10s  %10s   %-24s %s%s\n" \
+  "$DIM" "───" "$IP_DASHES" "──────────" "──────────" "────────────────────────" "────────────────────" "$RESET"
 
 # Traceroute + geo lookup
 hop_count=0
@@ -173,7 +255,7 @@ while IFS= read -r -t 30 line; do
 
   # Timeout line (* * *)
   if [[ "$line" =~ ^[[:space:]]*[0-9]+[[:space:]]+\*[[:space:]]+\*[[:space:]]+\* ]]; then
-    printf " %s%3s%s  %s%-16s%s  %s%10s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
+    printf " %s%3s%s  %s%-${IP_WIDTH}s%s  %s%10s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
       "$BOLD" "$hop" "$RESET" \
       "$DIM" "*" "$RESET" \
       "$DIM" "*" "$RESET" \
@@ -192,7 +274,11 @@ while IFS= read -r -t 30 line; do
   consecutive_timeouts=0
 
   # Extract IP and latency
-  ip=$(echo "$line" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+  if [[ "$proto" == "6" ]]; then
+    ip=$(echo "$line" | grep -oE '[0-9a-fA-F:]+:[0-9a-fA-F:]+' | head -1)
+  else
+    ip=$(echo "$line" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+  fi
   latency=$(echo "$line" | grep -oE '[0-9]+\.[0-9]+ ms' | head -1)
   latency="${latency:--}"
 
@@ -215,7 +301,7 @@ while IFS= read -r -t 30 line; do
 
   # Private IP — skip geo lookup
   if is_private_ip "$ip"; then
-    printf " %s%3s%s  %s%-16s%s  %s%10s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
+    printf " %s%3s%s  %s%-${IP_WIDTH}s%s  %s%10s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
       "$BOLD" "$hop" "$RESET" \
       "$CYAN" "$ip" "$RESET" \
       "$YELLOW" "$latency" "$RESET" \
@@ -252,7 +338,7 @@ while IFS= read -r -t 30 line; do
     org="-"
   fi
 
-  printf " %s%3s%s  %s%-16s%s  %s%10s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
+  printf " %s%3s%s  %s%-${IP_WIDTH}s%s  %s%10s%s  %s%10s%s   %s%-24s%s %s%s%s\n" \
     "$BOLD" "$hop" "$RESET" \
     "$CYAN" "$ip" "$RESET" \
     "$YELLOW" "$latency" "$RESET" \
@@ -260,7 +346,7 @@ while IFS= read -r -t 30 line; do
     "$GREEN" "$location" "$RESET" \
     "$DIM" "$org" "$RESET"
 
-done < <(traceroute -n -m "$MAX_HOPS" -q "$PROBES" "$target_ip" 2>&1)
+done < <($TRACEROUTE_CMD -n -m "$MAX_HOPS" -q "$PROBES" "$target_ip" 2>&1)
 
 # Footer
 echo
