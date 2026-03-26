@@ -48,6 +48,7 @@ Examples:
   tracegeo -m 15 example.com
   tracegeo -6 google.com
   tracegeo 2001:4860:4860::8888
+  tracegeo https://google.com/imghp?hl=en&ogbl
 EOF
 }
 
@@ -81,6 +82,31 @@ is_private_ip() {
     fc[0-9a-fA-F][0-9a-fA-F]:*|fd[0-9a-fA-F][0-9a-fA-F]:*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+parse_target() {
+  local t="$1"
+  local had_scheme=false
+  # Strip scheme (e.g. https://, http://)
+  if [[ "$t" == *"://"* ]]; then
+    t="${t#*://}"
+    had_scheme=true
+  fi
+  # Strip path, query, fragment
+  t="${t%%/*}"
+  t="${t%%\?*}"
+  t="${t%%#*}"
+  # Strip port only if a scheme was present (bare IPv6 addresses contain colons)
+  if $had_scheme; then
+    if [[ "$t" == "["* ]]; then
+      # IPv6 in brackets: [::1]:8080 → ::1
+      t="${t#\[}"
+      t="${t%%\]*}"
+    else
+      t="${t%%:*}"
+    fi
+  fi
+  echo "$t"
 }
 
 resolve_traceroute_cmd() {
@@ -164,6 +190,7 @@ done
 
 TARGET="${1:-}"
 [[ -z "$TARGET" ]] && { usage; exit 1; }
+TARGET=$(parse_target "$TARGET")
 
 # ---------------------------------------------------------------------------
 # Main

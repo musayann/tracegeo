@@ -26,6 +26,7 @@ Done. 6 hops, destination reached.
 
 ## Features
 
+- Accepts full URLs (`https://example.com/path`), domain names, or raw IP addresses as the target
 - Traces the full network path to any IP address or domain name
 - Supports both IPv4 and IPv6 traceroutes with `-4`/`-6` flags (auto-detects by default)
 - Resolves domain names to IPs via `dig`
@@ -125,6 +126,12 @@ Trace the route to a domain:
 tracegeo google.com
 ```
 
+Trace using a full URL (the domain is extracted automatically):
+
+```sh
+tracegeo https://example.com/path
+```
+
 Trace to a raw IP address:
 
 ```sh
@@ -184,16 +191,18 @@ tracegeo google.com > trace.txt
 
 tracegeo is a single Bash script that chains standard Unix networking tools with a free geolocation API. The pipeline has four stages:
 
-1. **DNS Resolution** — If the target is a domain name, `dig +short` resolves it to an IP address (A record for IPv4, AAAA for IPv6). The protocol is auto-detected or can be forced with `-4`/`-6`. If resolution fails, the script exits with an error.
+1. **Input Parsing** — If the target is a full URL (e.g., `https://example.com/pathpath`), the scheme, path, query string, fragment, and port are stripped to extract the hostname. Plain domains and IP addresses pass through unchanged.
 
-2. **Route Tracing** — `traceroute -n` (or `traceroute6 -n` for IPv6) runs with the configured max hops and probes per hop. The `-n` flag skips reverse DNS to keep output fast and parseable. Output is streamed line-by-line through a `while read` loop so results appear incrementally.
+2. **DNS Resolution** — If the target is a domain name, `dig +short` resolves it to an IP address (A record for IPv4, AAAA for IPv6). The protocol is auto-detected or can be forced with `-4`/`-6`. If resolution fails, the script exits with an error.
 
-3. **Geolocation Lookup** — For each hop that returns a public IP, the script sends a request to `https://ipinfo.io/<ip>` via `curl` with a 3-second timeout. The JSON response is parsed with `grep`/`cut` — no `jq` dependency required. Private IPs (RFC 1918) are labeled `(private)` and skip the API call entirely. Timed-out hops (`* * *`) are displayed as `*`.
+3. **Route Tracing** — `traceroute -n` (or `traceroute6 -n` for IPv6) runs with the configured max hops and probes per hop. The `-n` flag skips reverse DNS to keep output fast and parseable. Output is streamed line-by-line through a `while read` loop so results appear incrementally.
 
-4. **Formatted Output** — Results are printed as a column-aligned table using `printf`. Unicode box-drawing characters form the header separator. ANSI color codes are applied for readability but automatically suppressed when `NO_COLOR` is set or stdout is not a terminal.
+4. **Geolocation Lookup** — For each hop that returns a public IP, the script sends a request to `https://ipinfo.io/<ip>` via `curl` with a 3-second timeout. The JSON response is parsed with `grep`/`cut` — no `jq` dependency required. Private IPs (RFC 1918) are labeled `(private)` and skip the API call entirely. Timed-out hops (`* * *`) are displayed as `*`.
+
+5. **Formatted Output** — Results are printed as a column-aligned table using `printf`. Unicode box-drawing characters form the header separator. ANSI color codes are applied for readability but automatically suppressed when `NO_COLOR` is set or stdout is not a terminal.
 
 ```
-destination ──▶ dig (DNS) ──▶ traceroute ──▶ per-hop curl (ipinfo.io) ──▶ formatted table
+destination ──▶ URL parsing ──▶ dig (DNS) ──▶ traceroute ──▶ per-hop curl (ipinfo.io) ──▶ formatted table
 ```
 
 ## Environment Variables
