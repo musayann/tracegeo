@@ -56,6 +56,18 @@ Run `make check` to verify all dependencies are present.
 
 ## Installation
 
+### From a release
+
+Download and extract the [latest release](https://github.com/musayann/tracegeo/releases/latest):
+
+```sh
+curl -fsSL https://github.com/musayann/tracegeo/archive/refs/tags/v0.2.0.tar.gz | tar xz
+cd tracegeo-*
+make install
+```
+
+You can find all available versions on the [releases page](https://github.com/musayann/tracegeo/releases).
+
 ### From source
 
 ```sh
